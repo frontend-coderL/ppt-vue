@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onBeforeUnmount } from "vue";
-import { initIframeEditor, destroyIframeEditor, getIframeHtml, fitIframeContent } from "../composables/useIframeEditor";
+import {
+  initIframeEditor,
+  destroyIframeEditor,
+  getIframeHtml,
+  fitIframeContent,
+  boldSelected,
+} from "../composables/useIframeEditor";
 
 const props = defineProps<{ url: string; active: boolean }>();
 const iframeRef = ref<HTMLIFrameElement | null>(null);
@@ -75,6 +81,14 @@ function save() {
 function reset() {
   if (iframeRef.value) iframeRef.value.srcdoc = originalHtml.value;
 }
+
+/**
+ * 将选中元素文本加粗
+ */
+function bold() {
+  if (!iframeRef.value) return;
+  boldSelected(iframeRef.value);
+}
 </script>
 
 <template>
@@ -85,6 +99,12 @@ function reset() {
         @click="save"
       >
         保存本页
+      </button>
+      <button
+        class="btn"
+        @click="bold"
+      >
+        加粗
       </button>
       <button
         class="btn"

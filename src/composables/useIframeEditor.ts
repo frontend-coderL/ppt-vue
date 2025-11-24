@@ -141,3 +141,14 @@ export function fitIframeContent(frame: HTMLIFrameElement): void {
   body.style.transformOrigin = "top left";
   body.style.transform = `scale(${scale})`;
 }
+
+/**
+ * 将当前选中元素的文本设置为加粗
+ */
+export function boldSelected(frame: HTMLIFrameElement): void {
+  const win = frame.contentWindow as any;
+  const state = win?.__editorState;
+  const el = state?.target as HTMLElement | null;
+  if (!el) return;
+  el.style.fontWeight = "700";
+}
