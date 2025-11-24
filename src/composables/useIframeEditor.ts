@@ -1,21 +1,51 @@
 /**
- * 在 iframe 内初始化编辑器：安装事件与 Moveable
+ * 在 iframe 内初始化编辑器：安装事件与 Subjx
  */
 export async function initIframeEditor(frame: HTMLIFrameElement): Promise<void> {
   const doc = frame.contentDocument;
   if (!doc) return;
 
-  // 插入 Moveable CDN（只插一次）
-  if (!doc.querySelector("#__moveable_cdn")) {
+  // 插入 Subjx CDN 与样式（只插一次）
+  if (!doc.querySelector("#__subjx_cdn")) {
+    const link = doc.createElement("link");
+    link.id = "__subjx_css";
+    link.rel = "stylesheet";
+    link.href = "https://unpkg.com/subjx/dist/style/subjx.css";
+    doc.head.appendChild(link);
+
     const script = doc.createElement("script");
-    script.id = "__moveable_cdn";
-    script.src = "https://unpkg.com/moveable/dist/moveable.min.js";
+    script.id = "__subjx_cdn";
+    script.src = "https://unpkg.com/subjx/dist/js/subjx.js";
     doc.head.appendChild(script);
     await new Promise<void>((resolve) => (script.onload = () => resolve()));
   }
 
   const win = frame.contentWindow as any;
-  const state = win.__editorState || (win.__editorState = { moveable: null, target: null });
+  const state = win.__editorState || (win.__editorState = { subjx: null, target: null, controls: null });
+
+  /**
+   * 创建并返回缩放包裹容器（用于对齐 Subjx 控件与被缩放内容）
+   */
+  function ensureScaleWrapper(): HTMLElement {
+    let wrapper = doc?.getElementById("__ppt_scale_root") as HTMLElement | null;
+    if (!wrapper) {
+      wrapper = doc!.createElement("div");
+      wrapper.id = "__ppt_scale_root";
+      wrapper.style.position = "relative";
+      wrapper.style.left = "0";
+      wrapper.style.top = "0";
+      wrapper.style.transformOrigin = "top left";
+      // 将 body 内现有子节点搬迁到 wrapper
+      const children = Array.from(doc!.body.childNodes);
+      children.forEach((node) => wrapper!.appendChild(node));
+      doc!.body.appendChild(wrapper);
+      // 保证 body 作为视口容器
+      doc!.body.style.margin = "0";
+      doc!.body.style.overflow = "hidden";
+    }
+    return wrapper;
+  }
+  const scaleWrapper = ensureScaleWrapper();
 
   /**
    * 选择目标元素
@@ -23,30 +53,67 @@ export async function initIframeEditor(frame: HTMLIFrameElement): Promise<void> 
   function selectTarget(el: HTMLElement) {
     state.target = el;
 
-    const MoveableCtor = (win as any).Moveable;
-    if (!MoveableCtor) return;
+    const subjxFn = (win as any).subjx || (win as any).Subjx;
+    if (!subjxFn) return;
 
-    if (!state.moveable) {
-      state.moveable = new MoveableCtor(doc!.body, {
-        target: el,
+    if (!state.subjx) {
+      state.subjx = subjxFn(el).drag({
         draggable: true,
         resizable: true,
-        scalable: true,
         rotatable: false,
-        origin: false,
+        scalable: true,
+        container: scaleWrapper,
+        controlsContainer: scaleWrapper,
+        onMove({ transform }: any) {
+          el.style.transform = transform;
+          try {
+            state.subjx?.fitControlsToSize?.();
+          } catch {}
+        },
+        onResize({ transform, width, height }: any) {
+          if (typeof width === "number") el.style.width = `${width}px`;
+          if (typeof height === "number") el.style.height = `${height}px`;
+          if (transform) el.style.transform = transform;
+          try {
+            state.subjx?.fitControlsToSize?.();
+          } catch {}
+        },
       });
-      state.moveable.on("drag", ({ target, transform }: any) => {
-        target.style.transform = transform;
-      });
-      state.moveable.on("resize", ({ target, width, height, delta }: any) => {
-        if (delta[0]) target.style.width = `${width}px`;
-        if (delta[1]) target.style.height = `${height}px`;
-      });
-      state.moveable.on("scale", ({ target, transform }: any) => {
-        target.style.transform = transform;
-      });
+      state.controls = state.subjx.controls || null;
+      try {
+        state.subjx.fitControlsToSize();
+      } catch {}
     } else {
-      state.moveable.target = el;
+      // 先禁用旧实例，再绑定到新元素
+      try {
+        state.subjx.disable();
+      } catch {}
+      state.subjx = subjxFn(el).drag({
+        draggable: true,
+        resizable: true,
+        rotatable: false,
+        scalable: true,
+        container: scaleWrapper,
+        controlsContainer: scaleWrapper,
+        onMove({ transform }: any) {
+          el.style.transform = transform;
+          try {
+            state.subjx?.fitControlsToSize?.();
+          } catch {}
+        },
+        onResize({ transform, width, height }: any) {
+          if (typeof width === "number") el.style.width = `${width}px`;
+          if (typeof height === "number") el.style.height = `${height}px`;
+          if (transform) el.style.transform = transform;
+          try {
+            state.subjx?.fitControlsToSize?.();
+          } catch {}
+        },
+      });
+      state.controls = state.subjx.controls || null;
+      try {
+        state.subjx.fitControlsToSize();
+      } catch {}
     }
   }
 
@@ -68,8 +135,13 @@ export async function initIframeEditor(frame: HTMLIFrameElement): Promise<void> 
   if (!win.__editorInstalled) {
     doc.addEventListener("pointerdown", (e: Event) => {
       const el = e.target as HTMLElement;
-      if (!el || el.closest(".moveable-control, .moveable-line")) return;
+      if (!el) return;
+      const controls = state.controls as HTMLElement | null;
+      if (controls && (el === controls || controls.contains(el))) return;
       selectTarget(el);
+      try {
+        state.subjx?.fitControlsToSize?.();
+      } catch {}
     });
     doc.addEventListener("dblclick", (e: Event) => {
       const el = e.target as HTMLElement;
@@ -100,9 +172,12 @@ export function destroyIframeEditor(frame: HTMLIFrameElement | null): void {
   if (!frame?.contentWindow) return;
   const win = frame.contentWindow as any;
   const state = win.__editorState;
-  if (state?.moveable) {
-    state.moveable.destroy();
-    win.__editorState.moveable = null;
+  if (state?.subjx) {
+    try {
+      state.subjx.disable();
+    } catch {}
+    win.__editorState.subjx = null;
+    win.__editorState.controls = null;
   }
 }
 
@@ -122,9 +197,10 @@ export function fitIframeContent(frame: HTMLIFrameElement): void {
   if (!doc) return;
   const html = doc.documentElement as HTMLElement;
   const body = doc.body as HTMLElement;
+  const wrapper = (doc.getElementById("__ppt_scale_root") as HTMLElement) || body;
 
-  const contentWidth = Math.max(body.scrollWidth, html.scrollWidth);
-  const contentHeight = Math.max(body.scrollHeight, html.scrollHeight);
+  const contentWidth = Math.max(wrapper.scrollWidth, html.scrollWidth);
+  const contentHeight = Math.max(wrapper.scrollHeight, html.scrollHeight);
   if (!contentWidth || !contentHeight) return;
 
   const viewportWidth = frame.clientWidth;
@@ -136,10 +212,18 @@ export function fitIframeContent(frame: HTMLIFrameElement): void {
   html.style.overflow = "hidden";
   body.style.overflow = "hidden";
   body.style.margin = "0";
-  body.style.width = `${contentWidth}px`;
-  body.style.height = `${contentHeight}px`;
-  body.style.transformOrigin = "top left";
-  body.style.transform = `scale(${scale})`;
+  wrapper.style.width = `${contentWidth}px`;
+  wrapper.style.height = `${contentHeight}px`;
+  wrapper.style.transformOrigin = "top left";
+  wrapper.style.transform = "";
+  (wrapper.style as any).zoom = String(scale);
+
+  try {
+    const win = frame.contentWindow as any;
+    win.__editorScale = scale;
+    const subjxInst = win?.__editorState?.subjx;
+    subjxInst?.fitControlsToSize?.();
+  } catch {}
 }
 
 /**
