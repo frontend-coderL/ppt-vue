@@ -15,7 +15,7 @@ export async function initIframeEditor(frame: HTMLIFrameElement): Promise<void> 
   }
 
   const win = frame.contentWindow as any;
-  const state = win.__editorState || (win.__editorState = { moveable: null, target: null });
+  const state = win.__editorState || (win.__editorState = { moveable: null, target: null, pendingInsert: null });
 
   /**
    * 选择目标元素
@@ -63,11 +63,70 @@ export async function initIframeEditor(frame: HTMLIFrameElement): Promise<void> 
   }
 
   /**
+   * 计算 body 下数值型 z-index 的最大值
+   */
+  function getMaxZIndex(): number {
+    let max = 0;
+    const children = Array.from(doc!.body.children) as HTMLElement[];
+    for (const c of children) {
+      const zi = getComputedStyle(c).zIndex;
+      const n = parseInt(zi || "0", 10);
+      if (!Number.isNaN(n)) max = Math.max(max, n);
+    }
+    return max;
+  }
+
+  /**
    * 安装全局事件（只安装一次）
    */
   if (!win.__editorInstalled) {
     doc.addEventListener("pointerdown", (e: Event) => {
-      const el = e.target as HTMLElement;
+      const evt = e as MouseEvent;
+      const el = evt.target as HTMLElement;
+      const body = doc.body as HTMLElement;
+
+      // 一次性文本插入模式
+      if (state.pendingInsert === "text") {
+        const rect = body.getBoundingClientRect();
+        const transform = getComputedStyle(body).transform;
+        let scaleX = 1;
+        let scaleY = 1;
+        if (transform && transform !== "none") {
+          const nums = transform
+            .replace(/matrix\(([^)]+)\)/, "$1")
+            .replace(/matrix3d\(([^)]+)\)/, "$1")
+            .split(",")
+            .map((s) => parseFloat(s.trim()))
+            .filter((n) => !Number.isNaN(n));
+          if (nums.length === 6) {
+            scaleX = nums[0];
+            scaleY = nums[3];
+          } else if (nums.length === 16) {
+            scaleX = nums[0];
+            scaleY = nums[5];
+          }
+        }
+        const x = (evt.clientX - rect.left) / (scaleX || 1);
+        const y = (evt.clientY - rect.top) / (scaleY || 1);
+
+        const newEl = doc.createElement("div");
+        newEl.textContent = "双击可编辑";
+        newEl.style.position = "absolute";
+        newEl.style.left = `${x}px`;
+        newEl.style.top = `${y}px`;
+        newEl.style.fontSize = "16px";
+        newEl.style.color = "#333";
+        newEl.style.lineHeight = "1.4";
+        newEl.style.pointerEvents = "auto";
+        const maxZ = getMaxZIndex();
+        newEl.style.zIndex = String((maxZ || 9998) + 1);
+        body.appendChild(newEl);
+        selectTarget(newEl);
+        state.pendingInsert = null;
+        body.style.cursor = "";
+        return;
+      }
+
       if (!el || el.closest(".moveable-control, .moveable-line")) return;
       selectTarget(el);
     });
@@ -151,4 +210,16 @@ export function boldSelected(frame: HTMLIFrameElement): void {
   const el = state?.target as HTMLElement | null;
   if (!el) return;
   el.style.fontWeight = "700";
+}
+
+/**
+ * 进入一次性文本插入模式（激活页）
+ */
+export function armTextInsert(frame: HTMLIFrameElement): void {
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  const win = frame.contentWindow as any;
+  const state = win.__editorState || (win.__editorState = { moveable: null, target: null, pendingInsert: null });
+  state.pendingInsert = "text";
+  doc.body.style.cursor = "text";
 }

@@ -6,6 +6,7 @@ import {
   getIframeHtml,
   fitIframeContent,
   boldSelected,
+  armTextInsert,
 } from "../composables/useIframeEditor";
 
 const props = defineProps<{ url: string; active: boolean }>();
@@ -43,7 +44,7 @@ async function loadHtml() {
  */
 watch(
   () => props.active,
-  async (isActive) => {
+  async (isActive: any) => {
     if (!iframeRef.value) return;
     if (isActive) {
       await initIframeEditor(iframeRef.value);
@@ -89,6 +90,14 @@ function bold() {
   if (!iframeRef.value) return;
   boldSelected(iframeRef.value);
 }
+
+/**
+ * 触发一次性文本插入模式（仅激活页生效）
+ */
+function insertText() {
+  if (!iframeRef.value || !props.active) return;
+  armTextInsert(iframeRef.value);
+}
 </script>
 
 <template>
@@ -105,6 +114,12 @@ function bold() {
         @click="bold"
       >
         加粗
+      </button>
+      <button
+        class="btn"
+        @click="insertText"
+      >
+        文本
       </button>
       <button
         class="btn"
