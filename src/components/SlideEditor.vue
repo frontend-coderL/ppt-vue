@@ -23,11 +23,14 @@ async function loadHtml() {
   originalHtml.value = html;
   const baseHref = props.url.substring(0, props.url.lastIndexOf("/") + 1);
   const injected = html.replace("<head>", `<head><base href="${baseHref}">`);
-  if (iframeRef.value) iframeRef.value.srcdoc = injected;
+  if (iframeRef.value && iframeRef.value.srcdoc !== injected) iframeRef.value.srcdoc = injected;
   iframeRef.value?.addEventListener(
     "load",
     () => {
-      if (iframeRef.value) fitIframeContent(iframeRef.value);
+      if (iframeRef.value) {
+        fitIframeContent(iframeRef.value);
+        if (props.active) initIframeEditor(iframeRef.value);
+      }
     },
     { once: true }
   );
@@ -80,7 +83,19 @@ function save() {
  * 重置为初始 HTML
  */
 function reset() {
-  if (iframeRef.value) iframeRef.value.srcdoc = originalHtml.value;
+  if (iframeRef.value && iframeRef.value.srcdoc !== originalHtml.value) {
+    iframeRef.value.srcdoc = originalHtml.value;
+    iframeRef.value.addEventListener(
+      "load",
+      () => {
+        if (iframeRef.value) {
+          fitIframeContent(iframeRef.value);
+          if (props.active) initIframeEditor(iframeRef.value);
+        }
+      },
+      { once: true }
+    );
+  }
 }
 
 /**

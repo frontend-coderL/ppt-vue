@@ -1,6 +1,9 @@
 /**
  * 在 iframe 内初始化编辑器：安装事件与 Moveable
  */
+/**
+ * 在 iframe 内初始化编辑器：安装事件与 Moveable
+ */
 export async function initIframeEditor(frame: HTMLIFrameElement): Promise<void> {
   const doc = frame.contentDocument;
   if (!doc) return;
@@ -32,8 +35,12 @@ export async function initIframeEditor(frame: HTMLIFrameElement): Promise<void> 
         draggable: true,
         resizable: true,
         scalable: true,
-        rotatable: false,
+        rotatable: true,
+        pinchable: true,
         origin: false,
+        snappable: true,
+        elementGuidelines: Array.from(doc!.body.children),
+        snapThreshold: 5,
       });
       state.moveable.on("drag", ({ target, transform }: any) => {
         target.style.transform = transform;
@@ -43,6 +50,12 @@ export async function initIframeEditor(frame: HTMLIFrameElement): Promise<void> 
         if (delta[1]) target.style.height = `${height}px`;
       });
       state.moveable.on("scale", ({ target, transform }: any) => {
+        target.style.transform = transform;
+      });
+      state.moveable.on("rotate", ({ target, transform }: any) => {
+        target.style.transform = transform;
+      });
+      state.moveable.on("pinch", ({ target, transform }: any) => {
         target.style.transform = transform;
       });
     } else {
@@ -80,60 +93,64 @@ export async function initIframeEditor(frame: HTMLIFrameElement): Promise<void> 
    * 安装全局事件（只安装一次）
    */
   if (!win.__editorInstalled) {
-    doc.addEventListener("pointerdown", (e: Event) => {
-      const evt = e as MouseEvent;
-      const el = evt.target as HTMLElement;
-      const body = doc.body as HTMLElement;
+    doc.addEventListener(
+      "pointerdown",
+      (e: Event) => {
+        const evt = e as MouseEvent;
+        const el = evt.target as HTMLElement;
+        const body = doc.body as HTMLElement;
 
-      // 一次性文本插入模式
-      if (state.pendingInsert === "text") {
-        const rect = body.getBoundingClientRect();
-        const transform = getComputedStyle(body).transform;
-        let scaleX = 1;
-        let scaleY = 1;
-        if (transform && transform !== "none") {
-          const nums = transform
-            .replace(/matrix\(([^)]+)\)/, "$1")
-            .replace(/matrix3d\(([^)]+)\)/, "$1")
-            .split(",")
-            .map((s) => parseFloat(s.trim()))
-            .filter((n) => !Number.isNaN(n));
-          if (nums.length === 6) {
-            scaleX = nums[0];
-            scaleY = nums[3];
-          } else if (nums.length === 16) {
-            scaleX = nums[0];
-            scaleY = nums[5];
-          }
+        // 一次性文本插入模式
+        if (state.pendingInsert === "text") {
+          const rect = body.getBoundingClientRect();
+          const scaleX = body.offsetWidth / rect.width || 1;
+          const scaleY = body.offsetHeight / rect.height || 1;
+          const x = (evt.clientX - rect.left) * scaleX;
+          const y = (evt.clientY - rect.top) * scaleY;
+
+          const newEl = doc.createElement("div");
+          newEl.textContent = "双击可编辑";
+          newEl.style.position = "absolute";
+          newEl.style.left = `${x}px`;
+          newEl.style.top = `${y}px`;
+          newEl.style.fontSize = "16px";
+          newEl.style.color = "#333";
+          newEl.style.lineHeight = "1.4";
+          newEl.style.pointerEvents = "auto";
+          const maxZ = getMaxZIndex();
+          newEl.style.zIndex = String((maxZ || 9998) + 1);
+          body.appendChild(newEl);
+          selectTarget(newEl);
+          state.pendingInsert = null;
+          body.style.cursor = "";
+          return;
         }
-        const x = (evt.clientX - rect.left) / (scaleX || 1);
-        const y = (evt.clientY - rect.top) / (scaleY || 1);
 
-        const newEl = doc.createElement("div");
-        newEl.textContent = "双击可编辑";
-        newEl.style.position = "absolute";
-        newEl.style.left = `${x}px`;
-        newEl.style.top = `${y}px`;
-        newEl.style.fontSize = "16px";
-        newEl.style.color = "#333";
-        newEl.style.lineHeight = "1.4";
-        newEl.style.pointerEvents = "auto";
-        const maxZ = getMaxZIndex();
-        newEl.style.zIndex = String((maxZ || 9998) + 1);
-        body.appendChild(newEl);
-        selectTarget(newEl);
-        state.pendingInsert = null;
-        body.style.cursor = "";
-        return;
-      }
-
-      if (!el || el.closest(".moveable-control, .moveable-line")) return;
-      selectTarget(el);
-    });
+        if (!el) return;
+        if (el.closest(".moveable-control, .moveable-line")) {
+          evt.stopPropagation();
+          return;
+        }
+        selectTarget(el);
+      },
+      { capture: true }
+    );
     doc.addEventListener("dblclick", (e: Event) => {
       const el = e.target as HTMLElement;
       if (!el) return;
       toggleEdit(el, true);
+    });
+    doc.addEventListener("selectionchange", () => {
+      const sel = doc.getSelection();
+      if (!sel || sel.rangeCount === 0) {
+        win.__editorState.selection = null;
+        return;
+      }
+      try {
+        win.__editorState.selection = sel.getRangeAt(0).cloneRange();
+      } catch {
+        win.__editorState.selection = null;
+      }
     });
     doc.addEventListener("keydown", (e: any) => {
       if (e.key === "Escape") {
@@ -176,9 +193,14 @@ export function getIframeHtml(frame: HTMLIFrameElement): string {
 /**
  * 使 iframe 内页面内容按比例缩放以完全适配 iframe 尺寸
  */
+/**
+ * 使 iframe 内页面内容按比例缩放以完全适配 iframe 尺寸
+ */
 export function fitIframeContent(frame: HTMLIFrameElement): void {
   const doc = frame.contentDocument;
   if (!doc) return;
+  const win = frame.contentWindow as any;
+  const state = win.__editorState || (win.__editorState = { moveable: null, target: null, pendingInsert: null });
   const html = doc.documentElement as HTMLElement;
   const body = doc.body as HTMLElement;
 
@@ -199,17 +221,81 @@ export function fitIframeContent(frame: HTMLIFrameElement): void {
   body.style.height = `${contentHeight}px`;
   body.style.transformOrigin = "top left";
   body.style.transform = `scale(${scale})`;
+  body.style.touchAction = "none";
+
+  // 缓存缩放比例，供点击映射与交互使用
+  state.scaleX = scale;
+  state.scaleY = scale;
 }
 
 /**
  * 将当前选中元素的文本设置为加粗
  */
-export function boldSelected(frame: HTMLIFrameElement): void {
+/**
+ * 将当前选区或选中元素应用内联样式
+ */
+export function applyInlineStyle(frame: HTMLIFrameElement, style: Partial<CSSStyleDeclaration>): void {
+  const doc = frame.contentDocument!;
   const win = frame.contentWindow as any;
-  const state = win?.__editorState;
+  const state = win?.__editorState || {};
+  const range: Range | null = state.selection || null;
+  if (range && !range.collapsed) {
+    const span = doc.createElement("span");
+    Object.assign(span.style, style);
+    try {
+      range.surroundContents(span);
+      return;
+    } catch {
+      // 回退：对父节点应用样式
+      const common = range.commonAncestorContainer as HTMLElement;
+      if (common && common.nodeType === 1) {
+        Object.assign((common as HTMLElement).style, style);
+        return;
+      }
+    }
+  }
   const el = state?.target as HTMLElement | null;
-  if (!el) return;
-  el.style.fontWeight = "700";
+  if (el) Object.assign(el.style, style);
+}
+
+/**
+ * 将当前选中元素的文本设置为加粗（保留旧接口）
+ */
+export function boldSelected(frame: HTMLIFrameElement): void {
+  applyInlineStyle(frame, { fontWeight: "700" });
+}
+
+/**
+ * 切换加粗
+ */
+export function toggleBold(frame: HTMLIFrameElement): void {
+  const doc = frame.contentDocument!;
+  const win = frame.contentWindow as any;
+  const state = win?.__editorState || {};
+  const el = state?.target as HTMLElement | null;
+  const current = el ? getComputedStyle(el).fontWeight : "normal";
+  const next = current === "700" || current === "bold" ? "400" : "700";
+  applyInlineStyle(frame, { fontWeight: next });
+}
+
+/**
+ * 切换斜体
+ */
+export function toggleItalic(frame: HTMLIFrameElement): void {
+  const doc = frame.contentDocument!;
+  const win = frame.contentWindow as any;
+  const state = win?.__editorState || {};
+  const el = state?.target as HTMLElement | null;
+  const current = el ? getComputedStyle(el).fontStyle : "normal";
+  const next = current === "italic" ? "normal" : "italic";
+  applyInlineStyle(frame, { fontStyle: next });
+}
+
+/**
+ * 设置文本颜色
+ */
+export function setTextColor(frame: HTMLIFrameElement, color: string): void {
+  applyInlineStyle(frame, { color });
 }
 
 /**
