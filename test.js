@@ -5,3 +5,5 @@ function main() {
 }
 
 main();
+
+console.log(1);
