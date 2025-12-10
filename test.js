@@ -9,3 +9,5 @@ console.log(2);
 main();
 
 console.log(1);
+
+console.log("-----------------");
