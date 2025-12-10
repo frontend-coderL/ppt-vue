@@ -8,4 +8,8 @@ function main() {
   console.log("hello world");
 }
 
+console.log(2);
+
 main();
+
+console.log(1);
